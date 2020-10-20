@@ -1,0 +1,7 @@
+{
+  "WELCOME": "/",
+  "ANNOTATIONS": "/annot",
+  "DEPENDENCIES": "/deps",
+  "PREVIEW": "/preview",
+  "DONE": "/done"
+}

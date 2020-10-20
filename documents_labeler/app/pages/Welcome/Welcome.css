@@ -1,0 +1,14 @@
+.dropzone {
+  min-height: 150px;
+  padding: 20px 20px;
+  border: 2px dashed black;
+  background: white;
+}
+
+.logo {
+  height: 100px;
+}
+
+.full_screen {
+  height: 100vh;
+}
