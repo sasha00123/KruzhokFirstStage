@@ -1,18 +1,104 @@
+import os
 import sys
+from functools import partial
+from typing import List, Optional
+
 import cv2
-import numpy as np
-from pdf2image import convert_from_bytes
-
+from pdf2image import convert_from_path
 import typer
+import numpy as np
+import nltk, string
+import pytesseract
+from nltk.corpus import stopwords
+from pyaspeller import YandexSpeller
+from PIL import Image
 
+# Histogram threshold
 THRESHOLD = 0.07
-IOU_THRESHOLD = 0.75
-BLACK_THRESHOLD = 30
+# Longest common subsequence fraction threshold
+LCS_THRESHOLD = 1 / 3
+
+# Helper function to remove punctuation
+remove_punctuation_map = dict((ord(char), None) for char in string.punctuation)
+
+# Yandex speller
+speller = YandexSpeller()
+# Russian stop words (might be long to download for the first time)
+stop_words = set(stopwords.words('russian'))
+
+
+def fix_misspelling(text):
+    """
+    Uses Yaspeller to correct grammar
+    :param text: Text with possible misspellings (recognition errors)
+    :return: Fixed text
+    """
+    if not text.strip():
+        return text
+    changes = {change['word']: change['s'][0] for change in speller.spell(text) if change['s']}
+    for word, suggestion in changes.items():
+        text = text.replace(word, suggestion)
+    return text
+
+
+def normalize(text):
+    """
+    Text normalizer and splitter
+    :param text: Raw text
+    :return: Text splitted into words, lowercased with stop words and punctuation removed
+    """
+    return [w for w in nltk.word_tokenize(text.lower().translate(remove_punctuation_map)) if w not in stop_words]
+
+
+def extract_text(doc):
+    """
+    TODO: speed-up
+    Slow function since very general. There's a lot of space for improvements
+    :param doc: RGB image or path
+    :return: Text from the document
+    """
+    return fix_misspelling(pytesseract.image_to_string(doc, lang='rus'))
+
+
+def preprocess(doc):
+    """
+    Converts BGR image to list of hashed words
+    :param doc: BGR cv2 image, np array
+    :return: Hashed words found in the document
+    """
+    doc = cv2.cvtColor(doc, cv2.COLOR_BGR2RGB)
+    doc = Image.fromarray(doc)
+    return list(map(hash, normalize(extract_text(doc))))
+
+
+def lcs_similarity(seq1, seq2):
+    """
+    LCS similarity metrics
+    :param seq1: Array of words
+    :param seq2: Array of words
+    :return: LCS(seq1, seq2) / max(len(seq1), len(seq2))
+    """
+    lengths = np.zeros((len(seq1) + 1, len(seq2) + 1), dtype=np.int)
+
+    # row 0 and column 0 are initialized to 0 already
+    for i, char1 in enumerate(seq1):
+        for j, char2 in enumerate(seq2):
+            if char1 == char2:
+                lengths[i + 1][j + 1] = lengths[i][j] + 1
+            else:
+                lengths[i + 1][j + 1] = max(lengths[i + 1][j], lengths[i][j + 1])
+
+    return lengths[len(seq1)][len(seq2)] / max(len(seq1), len(seq2))
 
 
 def read_document(path):
+    """
+    Reads PDF(if pdf2image is successfully configured, might be unstable) and image files
+    :param path: PDF or image path
+    :return: cv2 BGR array
+    """
     if path.endswith(".pdf"):
-        img = convert_from_bytes(open(path).read())[0]
+        img = convert_from_path(path)[0]
         img = np.array(img)
     else:
         img = cv2.imread(path)
@@ -21,6 +107,11 @@ def read_document(path):
 
 
 def is_doc(img):
+    """
+    Quick histogram check
+    :param img: cv2 array
+    :return: where a given images is a document or not
+    """
     divisor = img.shape[0] * img.shape[1]
 
     min_vals = img.min(axis=-1, keepdims=True)
@@ -29,43 +120,43 @@ def is_doc(img):
     return (np.linalg.norm(new_image) / divisor) < THRESHOLD
 
 
-def get_printed_boxes(img):
-    kernel = np.ones((5, 5), np.uint8)
-    black_mask = img.max(axis=-1, keepdims=True) <= BLACK_THRESHOLD
-    printed_text = cv2.dilate((black_mask * 255).astype(np.uint8), kernel, iterations=3)
-    return printed_text
+def is_similar(doc1, doc2):
+    """
+    :param doc1: Preprocessed list of words
+    :param doc2: Preprocessed list of words
+    :return: Whether similarity of doc1 and doc2 meets threshold or not
+    """
+    return lcs_similarity(doc1, doc2) >= LCS_THRESHOLD
 
 
-def iou(img1, img2):
-    shape = (min(img1.shape[0], img2.shape[0]), min(img1.shape[1], img2.shape[1]))
-    img1 = cv2.resize(img1, shape)
-    img2 = cv2.resize(img2, shape)
-    return np.logical_and(img1, img2).sum() / np.logical_or(img1, img2).sum()
+def main(template: str, path: str):
+    """
+    CLI script to check if a given document is like template
+    :param template: Path to a template or directory to check every template
+    :param path: Path to a test doc or directory for mass run
+    """
+    if os.path.isdir(template):
+        templates = map(partial(os.path.join, template), os.listdir(template))
+    else:
+        templates = [template]
 
+    true_docs = [read_document(template) for template in templates]
+    true_docs_processed = [preprocess(true_doc) for true_doc in true_docs]
 
-def is_alike(doc1, doc2):
-    doc1 = get_printed_boxes(doc1)
-    doc2 = get_printed_boxes(doc2)
-
-    cv2.imwrite("doc1.jpg", doc1)
-    cv2.imwrite("doc2.jpg", doc2)
-    print(iou(doc1, doc2))
-
-    return iou(doc1, doc2) >= IOU_THRESHOLD
-
-
-def main(path: str, template: str= None):
-    doc = read_document(path)
-    # Yet unused
-    # true_doc = read_document(template)
-
-    if not is_doc(doc):
-        sys.exit(0)
-    # TBA
-    # if not is_alike(doc, true_doc):
-    #     sys.exit(0)
-
-    print("ok")
+    if os.path.isdir(path):
+        for doc_path in os.listdir(path):
+            doc_path = os.path.join(path, doc_path)
+            doc = read_document(doc_path)
+            ok = is_doc(doc) and any(
+                is_similar(true_doc_processed, preprocess(doc)) for true_doc_processed in true_docs_processed
+            )
+            print(doc_path, "-", "ok" if ok else "no")
+    else:
+        doc = read_document(path)
+        if is_doc(doc) and any(
+                is_similar(true_doc_processed, preprocess(doc)) for true_doc_processed in true_docs_processed
+        ):
+            print("ok")
 
 
 if __name__ == '__main__':

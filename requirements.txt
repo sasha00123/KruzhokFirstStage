@@ -4,3 +4,7 @@ opencv-python==4.4.0.44
 pdf2image==1.14.0
 Pillow==8.0.0
 typer==0.3.2
+
+nltk==3.5
+pytesseract==0.3.6
+pyaspeller==0.1.0
