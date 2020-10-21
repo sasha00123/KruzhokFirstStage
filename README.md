@@ -3,6 +3,10 @@
 
 `$ sudo apt install poppler-utils`
 
+Также нужна библиотека для распознавания текста:
+
+`$ sudo apt install tesseract-ocr tesseract-ocr-rus`
+
 Далее следует установить зависимости:
 
 `$ pip install -r requirements.txt`
