@@ -24,8 +24,8 @@ remove_punctuation_map = dict((ord(char), None) for char in string.punctuation)
 # Yandex speller
 speller = YandexSpeller()
 # Russian stop words (might be long to download for the first time)
-nltk.download("punkt", quite=True)
-nltk.download("stopwords", quite=True)
+nltk.download("punkt", quiet=True)
+nltk.download("stopwords", quiet=True)
 stop_words = set(stopwords.words('russian'))
 
 
